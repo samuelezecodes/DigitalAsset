@@ -1,3 +1,4 @@
+;; Digital Asset Registry with Validity Period, Security Verification, Asset Update Capability, Creator Verification, and Optimized Validity Extension
 ;; Define error codes
 (define-constant ERR-NOT-AUTHORIZED (err u1000))
 (define-constant ERR-INVALID-DIGEST-LENGTH (err u1001))
@@ -143,6 +144,56 @@
           (merge unwrapped-asset-data { creator: new-creator })
         )
         (ok true)
+      )
+    )
+  )
+)
+
+;; Function to check if a digest is already registered
+(define-read-only (is-digest-registered (asset-digest (buff 32)))
+  (is-some (map-get? registered-digests { digest: asset-digest }))
+)
+
+;; Function to extend asset registration validity
+(define-public (extend-asset-validity (asset-id uint) (new-validity uint))
+  (let
+    (
+      (current-asset-counter (var-get asset-counter))
+      (current-block block-height)
+    )
+    ;; Perform input validation
+    (asserts! (<= asset-id current-asset-counter) ERR-ASSET-ID-OUT-OF-RANGE)
+    (asserts! (> asset-id u0) ERR-INVALID-ASSET-ID)
+    (asserts! (> new-validity current-block) ERR-INVALID-VALIDITY)
+
+    (let
+      (
+        (asset-data (map-get? asset-registrations { asset-id: asset-id }))
+      )
+      (asserts! (is-some asset-data) ERR-ASSET-NOT-FOUND)
+      (let
+        (
+          (unwrapped-asset-data (unwrap-panic asset-data))
+        )
+        (asserts! (is-eq tx-sender (get creator unwrapped-asset-data)) ERR-NOT-AUTHORIZED)
+        (match (get validity unwrapped-asset-data)
+          current-validity (if (> new-validity current-validity)
+                                (begin
+                                  (map-set asset-registrations
+                                    { asset-id: asset-id }
+                                    (merge unwrapped-asset-data { validity: (some new-validity) })
+                                  )
+                                  (ok true)
+                                )
+                                ERR-INVALID-VALIDITY)
+          (begin
+            (map-set asset-registrations
+              { asset-id: asset-id }
+              (merge unwrapped-asset-data { validity: (some new-validity) })
+            )
+            (ok true)
+          )
+        )
       )
     )
   )
