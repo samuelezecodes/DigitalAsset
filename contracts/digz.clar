@@ -111,3 +111,40 @@
   )
 )
 
+;; Function to transfer asset ownership
+(define-public (transfer-asset (asset-id uint) (new-creator principal))
+  (let
+    (
+      (current-asset-counter (var-get asset-counter))
+    )
+    ;; Perform input validation
+    (asserts! (<= asset-id current-asset-counter) ERR-ASSET-ID-OUT-OF-RANGE)
+    (asserts! (> asset-id u0) ERR-INVALID-ASSET-ID)
+    
+    (let
+      (
+        (asset-data (map-get? asset-registrations { asset-id: asset-id }))
+      )
+      (asserts! (is-some asset-data) ERR-ASSET-NOT-FOUND)
+      (let
+        (
+          (unwrapped-asset-data (unwrap-panic asset-data))
+          (current-block block-height)
+        )
+        (asserts! (is-eq tx-sender (get creator unwrapped-asset-data)) ERR-NOT-AUTHORIZED)
+        (asserts! (or
+                    (is-none (get validity unwrapped-asset-data))
+                    (< current-block (unwrap-panic (get validity unwrapped-asset-data)))
+                  )
+                  ERR-ASSET-EXPIRED
+        )
+        (map-set asset-registrations
+          { asset-id: asset-id }
+          (merge unwrapped-asset-data { creator: new-creator })
+        )
+        (ok true)
+      )
+    )
+  )
+)
+
