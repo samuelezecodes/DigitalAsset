@@ -1,30 +1,113 @@
+;; Define error codes
+(define-constant ERR-NOT-AUTHORIZED (err u1000))
+(define-constant ERR-INVALID-DIGEST-LENGTH (err u1001))
+(define-constant ERR-DIGEST-ALL-ZEROS (err u1002))
+(define-constant ERR-DIGEST-ALREADY-REGISTERED (err u1003))
+(define-constant ERR-ASSET-NOT-FOUND (err u1004))
+(define-constant ERR-INVALID-ASSET-ID (err u1005))
+(define-constant ERR-ASSET-ID-OUT-OF-RANGE (err u1006))
+(define-constant ERR-ASSET-EXPIRED (err u1007))
+(define-constant ERR-INVALID-VALIDITY (err u1008))
+(define-constant ERR-NO-VALIDITY-SET (err u1009))
 
-;; title: digz
-;; version:
-;; summary:
-;; description:
+;; Define the contract
+(define-data-var admin principal tx-sender)
 
-;; traits
-;;
+;; Define a map to store asset registrations
+(define-map asset-registrations
+  { asset-id: uint }
+  { creator: principal, creation-time: uint, digest: (buff 32), validity: (optional uint) }
+)
 
-;; token definitions
-;;
+;; Define a map to track registered digests
+(define-map registered-digests
+  { digest: (buff 32) }
+  { asset-id: uint }
+)
 
-;; constants
-;;
+;; Define a counter for asset IDs
+(define-data-var asset-counter uint u0)
 
-;; data vars
-;;
+;; Function to register new asset
+(define-public (register-asset (asset-digest (buff 32)) (validity-block (optional uint)))
+  (let
+    (
+      (new-id (+ (var-get asset-counter) u1))
+      (current-block block-height)
+    )
+    ;; Perform input validation
+    (asserts! (is-eq (len asset-digest) u32) ERR-INVALID-DIGEST-LENGTH)
+    (asserts! (not (is-eq asset-digest 0x0000000000000000000000000000000000000000000000000000000000000000)) ERR-DIGEST-ALL-ZEROS)
+    (asserts! (is-none (map-get? registered-digests { digest: asset-digest })) ERR-DIGEST-ALREADY-REGISTERED)
+    ;; Check validity period
+    (asserts! (match validity-block
+                validity (> validity current-block)
+                true
+              )
+              ERR-INVALID-VALIDITY)
+    
+    ;; Register the asset
+    (map-set asset-registrations
+      { asset-id: new-id }
+      { creator: tx-sender, creation-time: current-block, digest: asset-digest, validity: validity-block }
+    )
+    ;; Track the registered digest
+    (map-set registered-digests
+      { digest: asset-digest }
+      { asset-id: new-id }
+    )
+    (var-set asset-counter new-id)
+    (ok new-id)
+  )
+)
 
-;; data maps
-;;
+;; Function to check asset ownership
+(define-read-only (check-asset-ownership (asset-id uint))
+  (let
+    (
+      (asset-data (map-get? asset-registrations { asset-id: asset-id }))
+    )
+    (if (is-some asset-data)
+      (let
+        (
+          (unwrapped-asset-data (unwrap-panic asset-data))
+          (current-block block-height)
+        )
+        (if (and
+              (is-some (get validity unwrapped-asset-data))
+              (>= current-block (unwrap-panic (get validity unwrapped-asset-data)))
+            )
+          ERR-ASSET-EXPIRED
+          (ok (get creator unwrapped-asset-data))
+        )
+      )
+      ERR-ASSET-NOT-FOUND
+    )
+  )
+)
 
-;; public functions
-;;
-
-;; read only functions
-;;
-
-;; private functions
-;;
+;; Function to verify asset digest
+(define-read-only (verify-asset-digest (asset-id uint) (digest-to-verify (buff 32)))
+  (let
+    (
+      (asset-data (map-get? asset-registrations { asset-id: asset-id }))
+    )
+    (if (is-some asset-data)
+      (let
+        (
+          (unwrapped-asset-data (unwrap-panic asset-data))
+          (current-block block-height)
+        )
+        (if (and
+              (is-some (get validity unwrapped-asset-data))
+              (>= current-block (unwrap-panic (get validity unwrapped-asset-data)))
+            )
+          ERR-ASSET-EXPIRED
+          (ok (is-eq (get digest unwrapped-asset-data) digest-to-verify))
+        )
+      )
+      ERR-ASSET-NOT-FOUND
+    )
+  )
+)
 
