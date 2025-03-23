@@ -199,3 +199,85 @@
   )
 )
 
+;; Function to update asset metadata (digest)
+(define-public (update-asset-metadata (asset-id uint) (new-digest (buff 32)))
+  (let
+    (
+      (current-asset-counter (var-get asset-counter))
+    )
+    ;; Perform input validation
+    (asserts! (<= asset-id current-asset-counter) ERR-ASSET-ID-OUT-OF-RANGE)
+    (asserts! (> asset-id u0) ERR-INVALID-ASSET-ID)
+    (asserts! (is-eq (len new-digest) u32) ERR-INVALID-DIGEST-LENGTH)
+    (asserts! (not (is-eq new-digest 0x0000000000000000000000000000000000000000000000000000000000000000)) ERR-DIGEST-ALL-ZEROS)
+    
+    (let
+      (
+        (asset-data (map-get? asset-registrations { asset-id: asset-id }))
+      )
+      (asserts! (is-some asset-data) ERR-ASSET-NOT-FOUND)
+      (let
+        (
+          (unwrapped-asset-data (unwrap-panic asset-data))
+          (current-block block-height)
+        )
+        ;; Check if the caller is the current creator
+        (asserts! (is-eq tx-sender (get creator unwrapped-asset-data)) ERR-NOT-AUTHORIZED)
+        ;; Check if the asset has not expired
+        (asserts! (or
+                    (is-none (get validity unwrapped-asset-data))
+                    (< current-block (unwrap-panic (get validity unwrapped-asset-data)))
+                  )
+                  ERR-ASSET-EXPIRED
+        )
+        ;; Remove the old digest from registered-digests
+        (map-delete registered-digests { digest: (get digest unwrapped-asset-data) })
+        ;; Update the asset registration with the new digest
+        (map-set asset-registrations
+          { asset-id: asset-id }
+          (merge unwrapped-asset-data { digest: new-digest })
+        )
+        ;; Add the new digest to registered-digests
+        (map-set registered-digests
+          { digest: new-digest }
+          { asset-id: asset-id }
+        )
+        (ok true)
+      )
+    )
+  )
+)
+
+;; Function to verify the current creator of a specific asset ID
+(define-read-only (verify-asset-creator (asset-id uint))
+  (let
+    (
+      (current-asset-counter (var-get asset-counter))
+    )
+    ;; Perform input validation
+    (asserts! (<= asset-id current-asset-counter) ERR-ASSET-ID-OUT-OF-RANGE)
+    (asserts! (> asset-id u0) ERR-INVALID-ASSET-ID)
+    
+    (let
+      (
+        (asset-data (map-get? asset-registrations { asset-id: asset-id }))
+      )
+      (if (is-some asset-data)
+        (let
+          (
+            (unwrapped-asset-data (unwrap-panic asset-data))
+            (current-block block-height)
+          )
+          (if (and
+                (is-some (get validity unwrapped-asset-data))
+                (>= current-block (unwrap-panic (get validity unwrapped-asset-data)))
+              )
+            ERR-ASSET-EXPIRED
+            (ok { creator: (get creator unwrapped-asset-data), validity: (get validity unwrapped-asset-data) })
+          )
+        )
+        ERR-ASSET-NOT-FOUND
+      )
+    )
+  )
+)
